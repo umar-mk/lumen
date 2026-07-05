@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 
 import { resolveLayout } from "@/lib/layout";
+import { polishScene } from "@/lib/scenePolish";
+import { findCueTime, retimeScene } from "@/lib/syncTimeline";
 import { offlineDerivativeLesson, offlineDerivativeScript } from "@/lib/offlinePipeline";
 import { lintScene, severeIssues } from "@/lib/sceneQA";
 import { validateScene } from "@/lib/sceneSchema";
@@ -197,5 +199,74 @@ offlineDerivativeLesson.segments.forEach((seg, i) => {
   );
   prevOffline = laid;
 });
+
+// ---------------------------------------------------------------------------
+// Audio-true retimer (lib/syncTimeline.ts): cued steps land on their spoken
+// phrase, duration becomes the audio length, warping stays monotonic.
+{
+  // "Watch a point approach the value on the graph." — ~9 words, one per 500ms.
+  const words = "Watch a point approach the value on the graph".split(" ").map((part, i) => ({
+    part,
+    start: i * 500,
+    end: i * 500 + 400,
+  }));
+
+  const cueHit = findCueTime(words, "point approach");
+  assert.ok(cueHit && Math.abs(cueHit.seconds - 1.0) < 1e-6, "cue phrase should resolve to word start time");
+
+  const cued: SceneSpec = {
+    ...cleanGraph,
+    timeline: cleanGraph.timeline.map((s) =>
+      s.targetId === "p" ? { ...s, cue: "point approach" } : { ...s },
+    ),
+  };
+  const audioSeconds = 4.5; // spoken length differs from the authored 12s
+  const retimed = retimeScene(cued, words, audioSeconds);
+  assert.equal(retimed.duration, audioSeconds, "scene duration must become the audio length");
+  const dotStep = retimed.timeline.find((s) => s.targetId === "p")!;
+  assert.ok(Math.abs(dotStep.start - 1.0) < 0.05, `cued step must land on the phrase (got ${dotStep.start})`);
+  const sorted = [...retimed.timeline].sort((a, b) => a.start - b.start);
+  for (const s of sorted) {
+    assert.ok(s.start >= 0 && s.start <= audioSeconds + 1e-6, "warped starts stay inside the audio");
+  }
+  // No timings available → proportional warp only, still audio-length.
+  const stretched = retimeScene(cleanGraph, null, 24);
+  assert.equal(stretched.duration, 24);
+  assert.ok(stretched.timeline.every((s) => s.start <= 24));
+}
+
+// ---------------------------------------------------------------------------
+// Polish pass (lib/scenePolish.ts): deterministic, idempotent, and it never
+// introduces severe lint issues on clean content.
+{
+  const once = polishScene(resolveLayout(applyShotPattern(cleanGraph, beat)));
+  const twice = polishScene(once);
+  assert.deepEqual(twice, once, "polish must be idempotent");
+  assert.deepEqual(severeIssues(lintScene(once)), [], "polish must not create severe issues");
+
+  // Blink-cut camera + blob zoom get clamped.
+  const zoomy: SceneSpec = {
+    ...cleanGraph,
+    view: { xMin: -8, xMax: 8, yMin: -4.5, yMax: 4.5 },
+    camera: [{ start: 1, duration: 0.3, to: { xMin: 1.9, xMax: 2.4, yMin: 3.8, yMax: 4.2 } }],
+  };
+  const polished = polishScene(zoomy);
+  const move = polished.camera![0];
+  assert.ok(move.duration >= 1.2, "camera moves must not blink-cut");
+  const area = (move.to.xMax - move.to.xMin) * (move.to.yMax - move.to.yMin);
+  assert.ok(area >= 0.2 * 16 * 9, `zoom must stay gentler than the blob threshold (got area ${area.toFixed(1)})`);
+}
+
+// Pacing lint: a front-loaded scene with a long frozen tail is flagged (warn).
+{
+  const frozen: SceneSpec = {
+    ...cleanGraph,
+    duration: 30,
+    timeline: cleanGraph.timeline.map((s) => ({ ...s })), // all motion ends ~3.4s
+  };
+  const issues = lintScene(resolveLayout(applyShotPattern(frozen, beat)));
+  assert.ok(issues.some((i) => i.code === "dead-air" || i.code === "front-loaded"), "frozen tail must be flagged");
+  assert.ok(issues.every((i) => i.code !== "dead-air" || i.severity === "warn"), "pacing issues stay warn-level");
+}
 
 console.log("visual QA smoke tests passed");

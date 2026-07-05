@@ -6,6 +6,8 @@ import { EdgeTTS } from "node-edge-tts";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import type { WordTiming } from "@/lib/syncTimeline";
+
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
@@ -16,6 +18,13 @@ const ttsRequestSchema = z.object({
 
 const DEFAULT_VOICE = "en-US-AndrewMultilingualNeural";
 
+/**
+ * Returns JSON: { audio: <base64 mp3>, words: WordTiming[] | null }.
+ * `words` are Edge's word-boundary timestamps (ms) for THIS exact audio —
+ * the player uses them to retime the scene so visuals land on spoken words
+ * (lib/syncTimeline.ts). Word timings are best-effort: if the subtitle file
+ * is missing/unparsable the audio still ships with words: null.
+ */
 export async function POST(req: Request) {
   let dir: string | null = null;
   try {
@@ -32,6 +41,7 @@ export async function POST(req: Request) {
       voice,
       lang: voice.split("-").slice(0, 2).join("-") || "en-US",
       outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+      saveSubtitles: true, // writes word boundaries to `${audioPath}.json`
       rate: "default",
       pitch: "default",
       volume: "default",
@@ -40,12 +50,28 @@ export async function POST(req: Request) {
 
     await tts.ttsPromise(parsed.data.text, audioPath);
     const audio = await readFile(audioPath);
-    return new Response(audio, {
-      headers: {
-        "Content-Type": "audio/mpeg",
-        "Cache-Control": "no-store",
-      },
-    });
+
+    let words: WordTiming[] | null = null;
+    try {
+      const raw = JSON.parse(await readFile(`${audioPath}.json`, "utf8")) as unknown;
+      if (Array.isArray(raw)) {
+        const parsedWords = raw.filter(
+          (w): w is WordTiming =>
+            typeof w === "object" && w !== null &&
+            typeof (w as WordTiming).part === "string" &&
+            Number.isFinite((w as WordTiming).start) &&
+            Number.isFinite((w as WordTiming).end),
+        );
+        if (parsedWords.length) words = parsedWords;
+      }
+    } catch {
+      // Word timings are an enhancement; the audio alone is still a full result.
+    }
+
+    return NextResponse.json(
+      { audio: audio.toString("base64"), words },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "TTS unavailable" }, { status: 502 });
   } finally {

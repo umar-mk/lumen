@@ -8,10 +8,18 @@
  * pause/resume so audio and animation stay on the same timeline.
  */
 
+import type { WordTiming } from "@/lib/syncTimeline";
+
 export interface Narrator {
   cancel(): void;
   pause(): void;
   resume(): void;
+}
+
+/** One beat's narration: the audio plus the word timings for THAT exact audio. */
+export interface NarrationAsset {
+  blob: Blob;
+  words: WordTiming[] | null;
 }
 
 const TTS_ENDPOINT = "/api/tts";
@@ -23,9 +31,9 @@ const MAX_CACHE_ENTRIES = 64; // bound memory across a long lesson
 // bites an un-prefetched first beat whose retries are all failing.
 const PLAY_BUDGET_MS = 20000;
 
-// text → in-flight/settled audio blob. Lets us warm the next beat early and
-// reuse audio when an interrupted beat replays.
-const blobCache = new Map<string, Promise<Blob>>();
+// text → in-flight/settled narration asset. Lets us warm the next beat early
+// and reuse audio when an interrupted beat replays.
+const blobCache = new Map<string, Promise<NarrationAsset>>();
 
 function evictIfNeeded() {
   while (blobCache.size > MAX_CACHE_ENTRIES) {
@@ -50,9 +58,17 @@ function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-// One beat → one mp3 blob, retrying transient Edge-endpoint failures. Each retry
-// is a fresh request to the route (a genuine new shot at Microsoft's endpoint).
-async function fetchTtsBlob(text: string, signal: AbortSignal): Promise<Blob> {
+function base64ToBlob(base64: string, type: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type });
+}
+
+// One beat → one mp3 + its word timings, retrying transient Edge-endpoint
+// failures. Each retry is a fresh request to the route (a genuine new shot at
+// Microsoft's endpoint). The route returns JSON { audio: base64, words }.
+async function fetchTtsBlob(text: string, signal: AbortSignal): Promise<NarrationAsset> {
   let lastErr: unknown = new Error("TTS unavailable");
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     if (signal.aborted) throw new DOMException("Aborted", "AbortError");
@@ -64,9 +80,11 @@ async function fetchTtsBlob(text: string, signal: AbortSignal): Promise<Blob> {
         signal,
       });
       if (!res.ok) throw new Error(`TTS ${res.status}`);
-      const blob = await res.blob();
+      const data = (await res.json()) as { audio?: string; words?: WordTiming[] | null };
+      if (!data.audio) throw new Error("Empty TTS audio");
+      const blob = base64ToBlob(data.audio, "audio/mpeg");
       if (!blob.size) throw new Error("Empty TTS audio");
-      return blob;
+      return { blob, words: data.words ?? null };
     } catch (err) {
       if (signal.aborted || (err instanceof DOMException && err.name === "AbortError")) throw err;
       lastErr = err;
@@ -90,7 +108,7 @@ export function prefetchNarration(text: string): void {
   evictIfNeeded();
 }
 
-function getNarrationBlob(text: string): Promise<Blob> {
+function getNarrationBlob(text: string): Promise<NarrationAsset> {
   const key = text.trim();
   const cached = blobCache.get(key);
   if (cached) return cached;
@@ -105,7 +123,7 @@ export function clearNarrationCache(): void {
 function silentNarrate(
   text: string,
   onDone?: () => void,
-  onReady?: (seconds: number) => void,
+  onReady?: (seconds: number, words?: WordTiming[] | null) => void,
   onStart?: () => void,
 ): Narrator {
   let cancelled = false;
@@ -116,7 +134,7 @@ function silentNarrate(
   const words = text.trim().split(/\s+/).filter(Boolean).length;
   const ms = Math.max(2500, (words / 165) * 60000); // ~165 wpm
   let remainingMs = ms;
-  onReady?.(ms / 1000);
+  onReady?.(ms / 1000, null);
 
   const finish = () => {
     timer = null;
@@ -157,7 +175,13 @@ function silentNarrate(
 
 export function narrate(
   text: string,
-  opts: { onDone?: () => void; rate?: number; onReady?: (seconds: number) => void; onStart?: () => void } = {},
+  opts: {
+    onDone?: () => void;
+    rate?: number;
+    /** Fires once the audio length (and word timings, when available) are known. */
+    onReady?: (seconds: number, words?: WordTiming[] | null) => void;
+    onStart?: () => void;
+  } = {},
 ): Narrator {
   if (typeof window === "undefined") return silentNarrate(text, opts.onDone, opts.onReady, opts.onStart);
 
@@ -209,13 +233,13 @@ export function narrate(
   };
 
   getNarrationBlob(text)
-    .then((blob) => {
+    .then((asset) => {
       if (cancelled || fallback) return;
       window.clearTimeout(budgetTimer);
-      objectUrl = URL.createObjectURL(blob);
+      objectUrl = URL.createObjectURL(asset.blob);
       audio = new Audio(objectUrl);
       audio.onloadedmetadata = () => {
-        if (!cancelled && audio && Number.isFinite(audio.duration)) opts.onReady?.(audio.duration);
+        if (!cancelled && audio && Number.isFinite(audio.duration)) opts.onReady?.(audio.duration, asset.words);
       };
       audio.onplaying = markStarted;
       audio.onended = () => {

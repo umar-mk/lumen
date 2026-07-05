@@ -209,6 +209,12 @@ export interface RunToolOptions {
   toolDescription: string;
   schema: z.ZodType;
   maxTokens: number;
+  /**
+   * Sampling temperature. Pinned per call-site so quality isn't hostage to
+   * provider defaults: lower for precise repair/param-filling, higher where
+   * creative composition helps. Omit to use the provider default.
+   */
+  temperature?: number;
 }
 
 /**
@@ -305,6 +311,7 @@ async function callAnthropic(
   const msg = await client.messages.create({
     model: MODEL,
     max_tokens: opts.maxTokens,
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     system: [
       {
         type: "text",
@@ -356,6 +363,7 @@ async function callOpenAICompatible(
   const requestBody = JSON.stringify({
     model: MODEL,
     max_tokens: opts.maxTokens,
+    ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
     messages,
     tools: [
       {

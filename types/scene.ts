@@ -431,6 +431,13 @@ export interface AnimationStep {
   start: number;
   /** Duration in seconds. */
   duration: number;
+  /**
+   * Optional narration cue: the EXACT short phrase from this beat's narration
+   * this step should land on. The player retimes the step to the moment those
+   * words are actually spoken (word-level TTS timings), so `start` becomes a
+   * fallback estimate rather than the source of truth.
+   */
+  cue?: string;
   /** move: destination (world coords). */
   to?: Vec2;
   /** transform: new LaTeX for an equation object (cross-fade). */

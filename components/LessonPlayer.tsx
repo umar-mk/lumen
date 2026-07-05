@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import SceneRenderer from "@/components/SceneRenderer";
+import { retimeScene, type WordTiming } from "@/lib/syncTimeline";
 import { narrate, prefetchNarration, type Narrator } from "@/lib/tts";
 import type { Lesson, LessonSegment } from "@/types/lesson";
 
@@ -39,7 +40,7 @@ export default function LessonPlayer({
   const [replayKey, setReplayKey] = useState(0);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [narrationTiming, setNarrationTiming] = useState<{ playId: string; seconds?: number }>({ playId: "" });
+  const [narrationTiming, setNarrationTiming] = useState<{ playId: string; seconds?: number; words?: WordTiming[] | null }>({ playId: "" });
   const [narrationStarted, setNarrationStarted] = useState<{ playId: string; started: boolean }>({ playId: "", started: false });
   const narratorRef = useRef<Narrator | null>(null);
   const narratorPlayIdRef = useRef<string | null>(null);
@@ -55,8 +56,19 @@ export default function LessonPlayer({
   const activeSegment = answer ?? lesson.segments[index];
   const playId = `${answer ? `a-${answer.id}` : `s-${index}`}-${replayKey}`;
   const narrationSeconds = narrationTiming.playId === playId ? narrationTiming.seconds : undefined;
+  const narrationWords = narrationTiming.playId === playId ? narrationTiming.words : undefined;
   const scenePlaying = phase === "playing" && narrationStarted.playId === playId && narrationStarted.started;
   const isCinema = chrome === "cinema";
+
+  // Audio-true timing: once the real narration audio (and its word timings) are
+  // known, warp the scene timeline onto it — cued steps land on their spoken
+  // phrase, and the scene lasts exactly as long as the voice. Falls back to the
+  // untimed scene until onReady fires (SceneRenderer holds pre-animation then).
+  const timedScene = useMemo(() => {
+    if (!activeSegment) return null;
+    if (!narrationSeconds) return activeSegment.scene;
+    return retimeScene(activeSegment.scene, narrationWords ?? null, narrationSeconds);
+  }, [activeSegment, narrationSeconds, narrationWords]);
 
   // Start narration once per playId. Pause/resume must NOT recreate the narrator,
   // or audio restarts from the beginning while the animation resumes in place.
@@ -70,8 +82,8 @@ export default function LessonPlayer({
     narratorPlayIdRef.current = currentPlayId;
 
     const narrator = narrate(activeSegment.narration, {
-      onReady: (sec) => {
-        if (narratorPlayIdRef.current === currentPlayId) setNarrationTiming({ playId: currentPlayId, seconds: sec });
+      onReady: (sec, words) => {
+        if (narratorPlayIdRef.current === currentPlayId) setNarrationTiming({ playId: currentPlayId, seconds: sec, words });
       },
       onStart: () => {
         if (narratorPlayIdRef.current === currentPlayId) setNarrationStarted({ playId: currentPlayId, started: true });
@@ -207,14 +219,14 @@ export default function LessonPlayer({
         className={isCinema ? "relative" : "relative overflow-hidden rounded-2xl border border-hairline-strong bg-black"}
         style={isCinema ? { width: "min(100vw, 177.7778vh)" } : undefined}
       >
-        {activeSegment && (
+        {activeSegment && timedScene && (
           // Key on playId ONLY. narrationSeconds arrives ~1-2s after the voice
           // loads; keying on it would remount mid-beat and restart the animation
           // (the "plays a bit, reloads, plays again" bug). SceneRenderer instead
           // waits for the measured length, then starts the timeline once.
           <SceneRenderer
             key={playId}
-            scene={activeSegment.scene}
+            scene={timedScene}
             sceneKey={playId}
             narrationSeconds={narrationSeconds}
             playing={scenePlaying}

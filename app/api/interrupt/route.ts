@@ -5,6 +5,7 @@ import { silentFallbackScene } from "@/lib/fallbackScene";
 import { resolveLayout } from "@/lib/layout";
 import { answerSegmentSchema, validateSegment } from "@/lib/lessonSchema";
 import { PERSONA, SCENE_RULES, NARRATION_RULES, INTERRUPT_RULES } from "@/lib/prompt";
+import { polishScene } from "@/lib/scenePolish";
 import { formatIssues, lintScene, severeIssues } from "@/lib/sceneQA";
 import { sanitizeScene } from "@/lib/sceneSanitize";
 import { applyShotPattern } from "@/lib/shotPatterns";
@@ -57,6 +58,7 @@ Answer with exactly one segment.`;
     const { input, usage } = await runTool({
       system: SYSTEM,
       toolName: "answer_segment",
+      temperature: 0.6,
       toolDescription: "Render one narrated scene that answers the student's interruption.",
       schema: answerSegmentSchema,
       // One narration + a full SceneSpec (objects + timeline) can exceed 4096
@@ -78,10 +80,10 @@ Answer with exactly one segment.`;
       syncCues: [{ phrase: result.segment.narration.slice(0, 80), visualAction: "Show the key answer visually." }],
       targetDurationSec: result.segment.scene.duration ?? 16,
     };
-    let scene = resolveLayout(applyShotPattern(result.segment.scene, beat));
+    let scene = polishScene(resolveLayout(applyShotPattern(result.segment.scene, beat)));
     let issues = severeIssues(lintScene(scene));
     for (let pass = 0; pass < 3 && issues.length; pass++) {
-      scene = resolveLayout(applyShotPattern(sanitizeScene(scene, issues), beat));
+      scene = polishScene(resolveLayout(applyShotPattern(sanitizeScene(scene, issues), beat)));
       issues = severeIssues(lintScene(scene));
     }
     if (issues.length) {

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:visual": "npx tsx scripts/visual-qa-smoke.ts"
+    "test:visual": "npx tsx scripts/visual-qa-smoke.ts",
+    "eval": "npx tsx scripts/eval-lessons.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",

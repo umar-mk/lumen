@@ -8,6 +8,7 @@ import {
   rectsIntersect,
   sampleFunctionPoints,
   sampleTimes,
+  sceneDuration,
   sceneRect,
   visibleObjectRects,
   type ObjectRect,
@@ -224,6 +225,44 @@ function lintAtTime(scene: SceneSpec, timeSec: number, issues: SceneIssue[]) {
   }
 }
 
+/**
+ * Pacing smells (warn, not error): the retimer (lib/syncTimeline.ts) auto-fixes
+ * dead air at play time, but a scene that RELIES on that fix is a quality miss
+ * worth surfacing in eval reports and qaWarnings. Warn-level on purpose — the
+ * sanitize loop has no pacing fixes, so severe would dead-end in a fallback.
+ */
+function lintPacing(scene: SceneSpec, issues: SceneIssue[]) {
+  const duration = sceneDuration(scene);
+  if (!scene.timeline.length) {
+    issues.push(issue("warn", "no-motion", "Scene has no timeline steps at all; the board is a static frame."));
+    return;
+  }
+  const intervals = scene.timeline
+    .map((s) => [Math.max(0, s.start), Math.min(duration, s.start + Math.max(0, s.duration))] as const)
+    .filter(([a, b]) => b > a)
+    .sort((a, b) => a[0] - b[0]);
+  let frontier = 0;
+  let worstGap = 0;
+  let worstGapAt = 0;
+  for (const [a, b] of intervals) {
+    if (a - frontier > worstGap) {
+      worstGap = a - frontier;
+      worstGapAt = frontier;
+    }
+    frontier = Math.max(frontier, b);
+  }
+  if (duration - frontier > worstGap) {
+    worstGap = duration - frontier;
+    worstGapAt = frontier;
+  }
+  if (worstGap > 4.5) {
+    issues.push(issue("warn", "dead-air", `Nothing animates for ${worstGap.toFixed(1)}s; spread the timeline across the beat.`, undefined, worstGapAt));
+  }
+  if (frontier < duration * 0.55) {
+    issues.push(issue("warn", "front-loaded", `All motion ends by ${frontier.toFixed(1)}s of ${duration.toFixed(0)}s; the scene freezes for the rest of the narration.`, undefined, frontier));
+  }
+}
+
 function lintCamera(scene: SceneSpec, issues: SceneIssue[]) {
   for (const move of scene.camera ?? []) {
     const activeRegionObjects = scene.objects.filter((obj) => overlayTypes.has(obj.type) && "region" in obj && obj.region);
@@ -302,6 +341,7 @@ export function lintScene(scene: SceneSpec): SceneIssue[] {
 
   for (const t of sampleTimes(scene)) lintAtTime(scene, t, issues);
   lintCamera(scene, issues);
+  lintPacing(scene, issues);
 
   return dedupeIssues(issues);
 }

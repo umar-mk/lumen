@@ -45,3 +45,6 @@ next-env.d.ts
 
 # local agent settings
 .claude/settings.local.json
+
+# eval harness output (local artifacts)
+/eval-results/

@@ -412,6 +412,9 @@ const animationStep = z.object({
   targetId: id,
   start: num.min(0).max(CAPS.duration),
   duration: num.min(0).max(CAPS.duration),
+  // Narration cue phrase this step should land on; the player retimes the step
+  // to the moment the phrase is actually spoken (word-level TTS timings).
+  cue: z.string().min(1).max(120).optional(),
   to: vec2.optional(),
   toLatex: z.string().max(CAPS.latex).optional(),
   fromValue: num.optional(),

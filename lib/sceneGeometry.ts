@@ -312,10 +312,15 @@ export function visibleObjectRects(scene: SceneSpec, timeSec: number, view: View
     .filter((r): r is ObjectRect => Boolean(r));
 }
 
-export function sampleTimes(scene: SceneSpec): number[] {
+/** Effective scene length: explicit duration, else the last step/camera end. */
+export function sceneDuration(scene: SceneSpec): number {
   const ends = scene.timeline.map((s) => s.start + s.duration);
   const cameraEnds = (scene.camera ?? []).map((m) => m.start + m.duration);
-  const duration = scene.duration ?? Math.max(1, ...ends, ...cameraEnds);
+  return scene.duration ?? Math.max(1, ...ends, ...cameraEnds);
+}
+
+export function sampleTimes(scene: SceneSpec): number[] {
+  const duration = sceneDuration(scene);
   const times = new Set<number>([0, duration * 0.15, duration * 0.35, duration * 0.6, duration * 0.85, duration]);
   for (const step of scene.timeline) {
     times.add(step.start);
