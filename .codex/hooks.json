@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/muhammad/Desktop/Lumen/.codex/hooks/block-dev-server.sh'",
+            "statusMessage": "Checking command is not a dev server…"
+          }
+        ]
+      }
+    ]
+  }
+}

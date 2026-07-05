@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0a0a0b;
+  --foreground: #f2f1ec;
+  --muted: #a4a29a;
+  --faint: #6b6a64;
+  --hairline: rgba(242, 241, 236, 0.08);
+  --hairline-strong: rgba(242, 241, 236, 0.14);
+  --panel: #101012;
+  --panel-raised: #141416;
+  --accent: #d9a441;
+  --accent-soft: rgba(217, 164, 65, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SFMono-Regular", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(217, 164, 65, 0.28);
+  color: #fff;
+}
+
+/* Thin, unobtrusive scrollbar to match the chrome */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(242, 241, 236, 0.18) transparent;
+}
+
+/* Section eyebrow label */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Subtle rise-in used on the landing page (transform/opacity only) */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.rise-1 { animation-delay: 0.06s; }
+.rise-2 { animation-delay: 0.14s; }
+.rise-3 { animation-delay: 0.24s; }
+.rise-4 { animation-delay: 0.36s; }
+
+/* Faint dotted backdrop for the hero, drawn with CSS only */
+.dotgrid {
+  background-image: radial-gradient(rgba(242, 241, 236, 0.055) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 30%, black 30%, transparent 75%);
+}
+
+/* Slow warm glow drifting behind the hero demo (transform/opacity only) */
+@keyframes glow-drift {
+  0% { transform: translate(-12%, 0) scale(1); opacity: 0.5; }
+  50% { transform: translate(12%, -6%) scale(1.15); opacity: 0.85; }
+  100% { transform: translate(-12%, 0) scale(1); opacity: 0.5; }
+}
+
+.glow-drift {
+  animation: glow-drift 14s ease-in-out infinite;
+}
+
+/* Seamless topic marquee — content is duplicated once, track slides half-way */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.marquee-track {
+  animation: marquee 42s linear infinite;
+}
+
+/* Indeterminate progress shimmer for the lesson-build stepper */
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+
+.shimmer-bar {
+  animation: shimmer 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .glow-drift,
+  .shimmer-bar,
+  .rise {
+    animation: none;
+  }
+}
