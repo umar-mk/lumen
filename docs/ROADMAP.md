@@ -71,10 +71,37 @@ next beat…") for when playback catches up to generation, with pending-beat
 placeholders in the progress row. Pre-stream errors stay plain JSON (400/429);
 mid-build failures become `error` events; a partial lesson stays playable.
 
+**Quality pillar stack — "the model composes, TypeScript directs" (2026-07-06):**
+- **Deterministic judge + eval harness:** `lib/sceneScore.ts` (0–100 composite:
+  lint, motion coverage, pacing, build progression, economy, overlay density,
+  camera, variety) + `npm run eval` (`scripts/eval-lessons.ts`, golden topics,
+  results in `eval-results/`) + `/debug/eval` viewer. Route logic extracted to
+  `lib/scriptBuilder.ts` / `lib/lessonBuilder.ts` so eval drives the REAL path.
+  Live DeepSeek baseline (3 topics, pre-changes): mean 83.5 / min 67.3, weakest
+  part = camera.
+- **Audio-true timing:** `/api/tts` returns Edge word-boundary timings with the
+  mp3; timeline steps carry optional `cue` (verbatim narration phrase); the
+  player warps the whole timeline onto the spoken audio (`lib/syncTimeline.ts`)
+  — cued actions land on their words, scene duration = real audio length, dead
+  air is auto-filled. Pacing lints (dead-air / front-loaded / no-motion, warn).
+- **Shot programs (7/7 patterns):** `lib/shotPrograms.ts` — hand-choreographed
+  deterministic templates (graph-approach, secant-to-tangent, equation-transform,
+  number-line-convergence, area-accumulation, vector-projection,
+  probability-bar-model). Model fills a tiny param object (fits=false → freeform
+  fallback); program scenes still pass the full layout/polish/QA gate.
+  `LUMEN_SHOT_PROGRAMS=0` disables.
+- **Best-of-N freeform:** parallel compose candidates scored by the judge,
+  winner kept (`LUMEN_BEST_OF`, default 2). Replaces the disabled LLM review.
+- **House-style polish:** `lib/scenePolish.ts` (entry order, stagger, min
+  durations, font tiers, camera zoom/duration clamps) on every scene.
+- **Semantic feature anchors:** `place:{kind:"feature"}` computes
+  min/max/root/inflection/intersection by sampling — markers land on true math.
+- Per-call temperature pinning in `lib/llm.ts`.
+
 ## ▶ Next up (ordered)
 
 *(Queue cleared 2026-07-05 — promote from Deferred with the user. Candidates:
-"model-decides" interruption, lesson persistence/history, eval harness.)*
+"model-decides" interruption, lesson persistence/history.)*
 
 ## 💤 Deferred (chosen for later)
 
@@ -85,8 +112,7 @@ mid-build failures become `error` events; a partial lesson stays playable.
   beats (vs. the MVP's answer-then-resume).
 - **Phase 4 — true 3D + live interactivity** — parametric surfaces + projection;
   student-driven parameter controls.
-- **Voice interruption** (STT), incremental scene patches, lesson persistence/history,
-  an eval harness for prompt regressions.
+- **Voice interruption** (STT), incremental scene patches, lesson persistence/history.
 - Legacy `/api/tutor` (single-scene v1) is unused by the lesson UI; keep or retire.
 
 ## Open questions

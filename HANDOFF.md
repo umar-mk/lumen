@@ -1,39 +1,48 @@
 # Handoff — current state
 
-**Updated:** 2026-07-05 · Claude
+**Updated:** 2026-07-06 · Claude
 
 ## Context right now
-**Pipelined lesson start just landed** (after the earlier trace-generalization /
-no-text-fallback / prompt-tightening batch — all in `docs/ROADMAP.md` §Done):
-- `/api/lesson` now STREAMS NDJSON: one `meta` event (lesson header + total), a
-  `segment` event per composed beat, then `done` (usage + warnings). Contract type
-  `LessonStreamEvent` lives in `types/lesson.ts`. Pre-stream failures (bad script,
-  429) are still plain JSON with status codes; mid-build failures become an
-  `error` event; per-beat rescue/fallback behaviour is unchanged.
-- `/learn` consumes the stream: player is revealed on the FIRST beat (stage
-  "ready" while `building` stays true), segments keep appending during playback,
-  the topic form stays locked until `done`, and a mid-stream error keeps any
-  partial lesson playable.
-- `LessonPlayer` new props `building` + `totalSegments`; new phase `"buffering"`
-  ("Composing the next beat…" overlay) when playback catches up to generation —
-  auto-resumes when the next beat arrives. Progress row shows pulsing
-  placeholders for beats not yet arrived. Narrator onDone reads live refs
-  (`segmentCountRef`/`buildingRef`), not stale closures.
+**The lesson-quality pillar stack just landed** (full description in
+`docs/ROADMAP.md` §Done → "Quality pillar stack"). Paradigm: *the model
+composes, TypeScript directs.* In one pass:
+- `lib/sceneScore.ts` judge + `npm run eval` golden-topic harness +
+  `/debug/eval` viewer (routes' logic extracted to `lib/scriptBuilder.ts` /
+  `lib/lessonBuilder.ts` so eval drives the real path).
+- Audio-true timing: `/api/tts` ships word timings; steps carry `cue`; the
+  player warps the timeline onto the actual audio (`lib/syncTimeline.ts`).
+- 7/7 shot programs (`lib/shotPrograms.ts`) — deterministic choreography,
+  model fills params, `fits=false` → freeform; `LUMEN_SHOT_PROGRAMS=0` kills.
+- Best-of-2 freeform selection (`LUMEN_BEST_OF`), house-style polish pass,
+  `place:{kind:"feature"}` math anchors, pinned temperatures.
+
+**Eval numbers (3 golden topics, live DeepSeek):** baseline (pre-stack)
+mean 83.5 / min 67.3, weakest = camera. Post-stack run: (see
+`eval-results/latest.json` — was still running at handoff time; compare
+against `eval-results/2026-07-05T19-41-13/`).
 
 ## Next up
-Deferred list remains: "model-decides" interruption, persistence/history, eval
-harness, phase-4 3D, retire `/api/tutor`. Pick with the user. A strategic review
-(market deep dive + interactive-whiteboard differentiation plan) was written and
-**tabled** 2026-07-05 → `docs/INTERACTIVE_TUTOR_PLAN.md`; don't start it unprompted.
+- Real-browser check: run a live lesson, confirm cued steps land on the
+  spoken words, program beats play their canonical choreography, and the
+  buffering overlay still resolves (streaming path untouched but retimer is
+  new in LessonPlayer).
+- If post-stack eval mean/min ≥ baseline: consider raising `LUMEN_BEST_OF`
+  or writing gold few-shot exemplars for the freeform tail.
+- Deferred queue unchanged: model-decides interruption, persistence/history,
+  phase-4 3D, retire `/api/tutor`.
 
 ## Verified (current tree)
-Green: `npx tsc --noEmit`, `npm run lint`, `npm run build` (unsandboxed). Stream
-protocol exercised end-to-end against the real route handler (offline path) in a
-scratch test: 11/11 checks. Earlier trace/fallback scratch tests: 18/18.
+Green: `npx tsc --noEmit`, `npm run lint`, `npm run build`,
+`npm run test:visual` (now also covers retimer, polish idempotency, all 7
+programs through the full gate, feature-anchor accuracy, pacing lints).
+`npm run eval -- --offline` sanity-passes (offline lesson mean 80).
 
 ## Watch-outs
 - Don't run `npm run dev` (hook-blocked; crashed the user's Mac). User runs it.
-- Streaming needs a real-browser check: start a live lesson, confirm playback
-  starts on beat 1 and the buffering overlay resolves itself.
-- react-hooks lint is strict here: no ref writes in render, no sync setState in
-  effects (LessonPlayer uses an effect-synced ref + setTimeout(0) pattern).
+- `/api/tts` response changed shape: JSON `{ audio: base64, words }` — the
+  only consumer is `lib/tts.ts`, but anything curling the route must adapt.
+- lib/llm reads env at module load → scripts must set env BEFORE importing
+  it (eval script uses dynamic imports for this; keep that pattern).
+- Program scenes intentionally fade region text out before camera pushes —
+  that's the choreography, not a bug; lintCamera is visibility-aware now.
+- Repo: github.com/umar-mk/lumen, everything on `main` (user's call).

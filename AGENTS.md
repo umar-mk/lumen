@@ -68,13 +68,21 @@ _Lesson layer (the product):_
 |---|---|
 | `types/lesson.ts` | `Lesson` = ordered `LessonSegment[]` (each `{ narration, scene }`) |
 | `lib/lessonSchema.ts` | zod validation + `LESSON_CAPS` for lessons & answer segments |
-| `lib/prompt.ts` | shared system-prompt blocks (persona, scene/narration/lesson rules) |
-| `lib/llm.ts` | shared Anthropic plumbing (forced tool-use, caching, cost guard) |
-| `lib/tts.ts` | browser Web Speech narration + silent fallback |
-| `components/LessonPlayer.tsx` | sequential narrated playback, pause/interrupt |
+| `lib/prompt.ts` | shared system-prompt blocks (persona, scene/narration/lesson/program rules) |
+| `lib/llm.ts` | shared provider plumbing (forced tool-use, caching, cost guard, per-call temperature) |
+| `lib/scriptBuilder.ts` | teacher-script generation + review + normalize (used by route AND eval) |
+| `lib/lessonBuilder.ts` | per-beat build loop: shot program → best-of-N freeform → layout/polish/QA/sanitize |
+| `lib/shotPrograms.ts` | deterministic choreographed scene templates; model fills tiny params (`fits` escape) |
+| `lib/sceneScore.ts` | 0–100 deterministic quality judge (eval harness + best-of-N selection) |
+| `lib/scenePolish.ts` | house-style pass: entry order, stagger, min durations, font tiers, zoom clamps |
+| `lib/syncTimeline.ts` | audio-true retimer: warps the timeline onto Edge TTS word timings via step `cue`s |
+| `lib/tts.ts` | Edge TTS narration client (audio + word timings) + silent fallback |
+| `components/LessonPlayer.tsx` | sequential narrated playback, pause/interrupt, retimes scenes to real audio |
 | `lib/exampleLessons.ts` | hand-authored sample lesson (offline demo) |
-| `app/api/lesson/route.ts` | one prompt → whole lesson (slow call) |
+| `app/api/lesson/route.ts` | NDJSON streaming wrapper around `lib/lessonBuilder` |
 | `app/api/interrupt/route.ts` | one fast answer segment (answer-then-resume) |
+| `scripts/eval-lessons.ts` | `npm run eval` — golden-topic regression gate scored by `sceneScore` |
+| `app/debug/eval/page.tsx` | browse eval runs; beats replay through the real renderer with score breakdowns |
 | `app/page.tsx` | topic input → `LessonPlayer` |
 
 _Scene layer (the engine, reused per segment):_
