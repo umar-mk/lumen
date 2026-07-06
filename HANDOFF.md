@@ -17,14 +17,18 @@ composes, TypeScript directs.* In one pass:
   `place:{kind:"feature"}` math anchors, pinned temperatures.
 
 **Eval numbers (3 golden topics, live DeepSeek):** baseline (pre-stack)
-mean 83.5 / min 67.3. Post-stack: mean 84.1 — under a STRICTER judge (the
-new pacing lints didn't exist at baseline). One beat hit 51.1: the script
-misassigned probability-bar-model to an orbiting-point beat and the program
-fired → two guards added (specialized programs need keyword agreement with
-the beat text; built program scenes must score ≥ 60 or fall back to
-freeform). Confirmation eval run after the guards: see
-`eval-results/latest.json`. Best-of-2 telemetry showed real rescues
-(picked 76 over 57.9, 81.6 over 72.3).
+mean 83.5 / min 67.3, weakest = camera. Post-stack + program guards
+(`eval-results/2026-07-06T00-48-51/`): **mean 84.7**, weakest is now
+motionCoverage — and the judge got STRICTER in between (pacing lints
+didn't exist at baseline). Zero failures/fallbacks in all runs. Program
+beats score 90+ (e.g. graph_approach 94.4); best-of-2 makes real rescues
+(picked 76 over 57.9). Guard history: an orbit beat misassigned
+probability-bar-model scored 51 → specialized programs now need keyword
+agreement + all program scenes must judge ≥ 60 (smoke-asserted).
+Remaining floor (~51, warn-only): freeform "two-panel + many labels"
+beats — overlay-density clutter, no severe issues. Next lever for that
+tail: gold few-shot exemplars in the freeform brief, or a comparison-panel
+program.
 
 ## Next up
 - Real-browser check: run a live lesson, confirm cued steps land on the
