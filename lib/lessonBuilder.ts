@@ -14,8 +14,9 @@ import { sanitizeScene } from "@/lib/sceneSanitize";
 import { formatIssues, lintScene, severeIssues, type SceneIssue } from "@/lib/sceneQA";
 import { validateScene, sceneSpecSchema } from "@/lib/sceneSchema";
 import { addUsage, emptyUsage } from "@/lib/scriptBuilder";
-import { PERSONA, SCENE_RULES, NARRATION_RULES, SCENE_COMPILE_RULES, SCENE_MINIMAL_RULES, SCENE_REPAIR_RULES, SCENE_REVIEW_RULES } from "@/lib/prompt";
+import { PERSONA, PROGRAM_RULES, SCENE_RULES, NARRATION_RULES, SCENE_COMPILE_RULES, SCENE_MINIMAL_RULES, SCENE_REPAIR_RULES, SCENE_REVIEW_RULES } from "@/lib/prompt";
 import { applyShotPattern } from "@/lib/shotPatterns";
+import { programForPattern, runProgram, type ShotProgram } from "@/lib/shotPrograms";
 import type { TeachingBeat, LessonScript } from "@/types/planning";
 import type { Lesson, LessonBuildWarning, LessonStreamEvent } from "@/types/lesson";
 import type { SceneSpec } from "@/types/scene";
@@ -189,6 +190,48 @@ async function repairScene(
   }
 }
 
+function programBrief(script: LessonScript, beat: TeachingBeat): string {
+  return `Fill the shot's parameters for this teaching beat.
+
+LESSON: ${script.topic} — ${script.title}
+
+THIS BEAT:
+- Teaching goal: ${beat.teachingGoal}
+- Narration (spoken aloud): "${beat.narration}"
+- Visual intent: ${beat.visualIntent}
+- Sync cues: ${beat.syncCues.map((c) => `"${c.phrase}" -> ${c.visualAction}`).join("; ") || "(none)"}
+- Target duration (seconds): ${beat.targetDurationSec}
+
+Return the parameter tool call (or fits=false if this beat truly is a different picture).`;
+}
+
+/**
+ * Try the beat's pre-choreographed shot program: one tiny param call instead of
+ * a freehand SceneSpec. Returns null (→ freeform compose) when the model says
+ * the shot doesn't fit, params don't validate, or the math doesn't compile.
+ */
+async function composeViaProgram(
+  program: ShotProgram,
+  script: LessonScript,
+  beat: TeachingBeat,
+): Promise<{ scene: SceneSpec | null; usage: Usage }> {
+  try {
+    const { input, usage } = await runTool({
+      system: `${PERSONA}\n\n${NARRATION_RULES}\n\n${PROGRAM_RULES}\n\n${program.rules}`,
+      toolName: `set_${program.id}_params`,
+      temperature: 0.3,
+      toolDescription: program.description,
+      schema: program.schema,
+      maxTokens: 3000,
+      messages: [{ role: "user", content: programBrief(script, beat) }],
+    });
+    return { scene: runProgram(program, input, beat), usage };
+  } catch (err) {
+    console.warn(`[lesson] program ${program.id} param call failed → freeform: ${err instanceof Error ? err.message : err}`);
+    return { scene: null, usage: emptyUsage() };
+  }
+}
+
 function minimalSceneBrief(script: LessonScript, beat: TeachingBeat, index: number, total: number): string {
   return `The full scene for beat ${index + 1} of ${total} failed to generate. Compose a MINIMAL replacement scene.
 
@@ -298,38 +341,54 @@ export async function buildLesson(script: LessonScript, send: (event: LessonStre
   for (let i = 0; i < total; i++) {
     const beat = script.beats[i];
     let scene: SceneSpec | null = null;
-    try {
-      const { input, usage: u } = await runTool({
-        system: SYSTEM,
-        toolName: "compose_scene",
-        temperature: 0.55,
-        toolDescription: "Compose ONE playable animated SceneSpec for a single teaching beat.",
-        schema: sceneSpecSchema,
-        maxTokens: 16000,
-        messages: [{ role: "user", content: sceneBrief(script, beat, i, total, prev) }],
-      });
-      usage = addUsage(usage, u);
-      const result = validateScene(input);
-      if (result.ok) {
-        scene = result.scene;
-        if (ENABLE_MODEL_REVIEW) {
-          const reviewed = await reviewScene(script, beat, i, total, scene, prev);
-          usage = addUsage(usage, reviewed.usage);
-          scene = reviewed.scene;
-          if (reviewed.warning) {
-            console.warn(`[lesson] beat ${i + 1}/${total} (${beat.id}) REVIEW kept original: ${reviewed.warning}`);
-            reviewWarnings.push({ beat: i + 1, id: beat.id, reason: reviewed.warning });
-          }
-        }
-      } else {
-        // Loud, never silent: reaching the rescue means generation failed.
-        console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) INVALID scene → minimal rescue: ${result.error}`);
-        failures.push({ beat: i + 1, id: beat.id, reason: `invalid: ${result.error}` });
+
+    // Program path first: on a matching shot pattern the model only fills a
+    // tiny param object and the choreography is deterministic — near-zero
+    // error surface and ~10× fewer output tokens than freeform.
+    const program = programForPattern(beat.shotPattern);
+    if (program) {
+      const viaProgram = await composeViaProgram(program, script, beat);
+      usage = addUsage(usage, viaProgram.usage);
+      if (viaProgram.scene) {
+        scene = viaProgram.scene;
+        console.log(`[lesson] beat ${i + 1}/${total} (${beat.id}) via shot program ${program.id}`);
       }
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) THREW → minimal rescue: ${reason}`);
-      failures.push({ beat: i + 1, id: beat.id, reason });
+    }
+
+    if (!scene) {
+      try {
+        const { input, usage: u } = await runTool({
+          system: SYSTEM,
+          toolName: "compose_scene",
+          temperature: 0.55,
+          toolDescription: "Compose ONE playable animated SceneSpec for a single teaching beat.",
+          schema: sceneSpecSchema,
+          maxTokens: 16000,
+          messages: [{ role: "user", content: sceneBrief(script, beat, i, total, prev) }],
+        });
+        usage = addUsage(usage, u);
+        const result = validateScene(input);
+        if (result.ok) {
+          scene = result.scene;
+          if (ENABLE_MODEL_REVIEW) {
+            const reviewed = await reviewScene(script, beat, i, total, scene, prev);
+            usage = addUsage(usage, reviewed.usage);
+            scene = reviewed.scene;
+            if (reviewed.warning) {
+              console.warn(`[lesson] beat ${i + 1}/${total} (${beat.id}) REVIEW kept original: ${reviewed.warning}`);
+              reviewWarnings.push({ beat: i + 1, id: beat.id, reason: reviewed.warning });
+            }
+          }
+        } else {
+          // Loud, never silent: reaching the rescue means generation failed.
+          console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) INVALID scene → minimal rescue: ${result.error}`);
+          failures.push({ beat: i + 1, id: beat.id, reason: `invalid: ${result.error}` });
+        }
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) THREW → minimal rescue: ${reason}`);
+        failures.push({ beat: i + 1, id: beat.id, reason });
+      }
     }
 
     if (!scene) {

@@ -3,6 +3,7 @@ import { compileExpr } from "@/lib/mathEval";
 import { compileParametric, isTraceableCurve, polygonPoints, sampleParametricPoints, samplePathPoints } from "@/lib/scenePaths";
 import { worldToPx } from "@/lib/coords";
 import {
+  isVisibleAt,
   objectRect,
   rectInside,
   rectsIntersect,
@@ -265,7 +266,15 @@ function lintPacing(scene: SceneSpec, issues: SceneIssue[]) {
 
 function lintCamera(scene: SceneSpec, issues: SceneIssue[]) {
   for (const move of scene.camera ?? []) {
-    const activeRegionObjects = scene.objects.filter((obj) => overlayTypes.has(obj.type) && "region" in obj && obj.region);
+    // Only regions still VISIBLE during the move can be clipped — fading a
+    // label out before pushing in is the correct choreography, not a defect.
+    const activeRegionObjects = scene.objects.filter(
+      (obj) =>
+        overlayTypes.has(obj.type) &&
+        "region" in obj &&
+        obj.region &&
+        isVisibleAt(scene, obj, move.start + move.duration * 0.5),
+    );
     for (const obj of activeRegionObjects) {
       const rect = objectRect(scene, obj, move.to);
       if (rect && !rectInside(rect.rect, sceneRect(), 22)) {

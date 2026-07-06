@@ -50,7 +50,15 @@ export type Anchor =
   | { kind: "absolute"; at: Vec2 }
   | { kind: "on"; target: string; x?: number; t?: number; at?: number; offset?: Vec2 }
   | { kind: "relativeTo"; target: string; side: "left" | "right" | "above" | "below" | "center"; gap?: number; offset?: Vec2 }
-  | { kind: "distribute"; in: string; axis: "x" | "y"; index: number; count: number; gap?: number; offset?: Vec2 };
+  | { kind: "distribute"; in: string; axis: "x" | "y"; index: number; count: number; gap?: number; offset?: Vec2 }
+  /**
+   * Semantic math feature, COMPUTED by the deterministic resolver — the model
+   * names the feature instead of guessing coordinates, so markers always land
+   * on the true minimum/maximum/root/inflection/intersection of the curve.
+   * `with` names the second curve for "intersection"; `index` picks among
+   * multiple roots/intersections left-to-right (default 0).
+   */
+  | { kind: "feature"; target: string; feature: "min" | "max" | "root" | "inflection" | "intersection"; with?: string; index?: number; offset?: Vec2 };
 
 interface LayoutIntent {
   /**

@@ -60,6 +60,16 @@ const placeAnchor = z.discriminatedUnion("kind", [
     gap: num.min(0).max(100).optional(),
     offset: vec2.optional(),
   }),
+  // Semantic math feature — resolved by sampling the target curve, so markers
+  // land on the TRUE min/max/root/inflection/intersection, never a guessed y.
+  z.object({
+    kind: z.literal("feature"),
+    target: id,
+    feature: z.enum(["min", "max", "root", "inflection", "intersection"]),
+    with: id.optional(),
+    index: z.number().int().min(0).max(31).optional(),
+    offset: vec2.optional(),
+  }),
 ]);
 const objectBase = { id, place: placeAnchor.optional() };
 

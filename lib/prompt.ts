@@ -41,7 +41,8 @@ RELATIONAL PLACEMENT (optional "place" on objects): prefer relationships over gu
 - {kind:"on", target:"curveOrPathId", x:number} puts an object on a function-plot at that x. For parametric/path/polygon/polyline targets, use {kind:"on", target:"id", t:number} or "at" as a 0..1 path fraction when appropriate. Add optional offset {x,y} for a nearby label.
 - {kind:"relativeTo", target:"id", side:"left"|"right"|"above"|"below"|"center", gap:number} places an object adjacent to another object.
 - {kind:"distribute", in:"groupOrBoxId", axis:"x"|"y", index:number, count:number} distributes repeated marks evenly in a target region.
-Use place:on for dots that ride curves, place:relativeTo for labels/panels near objects, and place:distribute for evenly spaced ticks/markers. Do not encode fragile alignment by eyeballing coordinates.
+- {kind:"feature", target:"curveId", feature:"min"|"max"|"root"|"inflection"|"intersection", with:"otherCurveId" (intersection only), index:0} — the renderer COMPUTES the exact point on the curve. ALWAYS use this when narration refers to a curve's minimum, maximum, zero/root, turning point, or where two curves meet/cross — never guess those coordinates yourself.
+Use place:on for dots that ride curves, place:feature for mathematically meaningful points, place:relativeTo for labels/panels near objects, and place:distribute for evenly spaced ticks/markers. Do not encode fragile alignment by eyeballing coordinates.
 
 CAPABILITY CONTRACT: use the composable basis above before asking for a named primitive. Trigger words → primitives: "circle / orbit / rotate / goes around / unit circle" → parametric + a trace step on a dot; "spiral / loop / wave in the plane / not a function" → parametric; "shape / outline / region / diagram / silhouette" → path or polygon; "evenly spaced marks / ticks / copies" → place:distribute; "point riding a curve" → dot with place:on plus a trace step. If an idea is still not directly drawable, degrade to a correct representable view: cross-section, 2-D schematic, graph, table, equation chain, or labeled path. Never invent unsupported object types and never imply true 3-D rotation; use a 2-D diagram unless the renderer vocabulary supports the exact thing.
 
@@ -233,6 +234,16 @@ Repair strategy:
 - Preserve the math objects and synchronization when possible, but never preserve a severe layout failure.
 
 Output ONLY the repaired SceneSpec as the tool call.`;
+
+export const PROGRAM_RULES = `SHOT PROGRAM PARAMS — this beat matches a pre-choreographed shot. You are NOT composing a scene; a deterministic renderer program already owns the choreography (entry order, camera, emphasis, layout). Your only job is the CONTENT parameters.
+
+Rules:
+- Choose math content faithful to the narration and teaching goal: the exact curve/equation the teacher is talking about, the exact points named.
+- Copy each cue parameter VERBATIM from this beat's narration (a short 2–6 word phrase) — the player lands the action on the moment those words are spoken. Prefer the beat's sync-cue phrases.
+- Expressions use the safe vocabulary only: + - * / ^, parentheses, sin cos tan asin acos atan sinh cosh tanh sqrt cbrt abs exp log ln log10 sign floor ceil round, constants pi e tau, variable x.
+- LaTeX params are KaTeX, no \\text-heavy prose — short math.
+- Set "fits": false ONLY when the beat truly cannot be told with this shot (wrong picture entirely). Do not set fits=false just because a parameter is optional or the story is simple.
+- Output only the tool call.`;
 
 export const SCENE_MINIMAL_RULES = `MINIMAL SCENE RESCUE — the full scene for this beat failed to generate. Produce ONE deliberately SIMPLE, guaranteed-valid SceneSpec that still gives the narration a real visual. Simplicity beats ambition here: a small correct picture is the whole job.
 

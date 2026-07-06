@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { resolveLayout } from "@/lib/layout";
 import { polishScene } from "@/lib/scenePolish";
+import { SHOT_PROGRAMS, runProgram } from "@/lib/shotPrograms";
 import { findCueTime, retimeScene } from "@/lib/syncTimeline";
 import { offlineDerivativeLesson, offlineDerivativeScript } from "@/lib/offlinePipeline";
 import { lintScene, severeIssues } from "@/lib/sceneQA";
@@ -267,6 +268,116 @@ offlineDerivativeLesson.segments.forEach((seg, i) => {
   const issues = lintScene(resolveLayout(applyShotPattern(frozen, beat)));
   assert.ok(issues.some((i) => i.code === "dead-air" || i.code === "front-loaded"), "frozen tail must be flagged");
   assert.ok(issues.every((i) => i.code !== "dead-air" || i.severity === "warn"), "pacing issues stay warn-level");
+}
+
+// ---------------------------------------------------------------------------
+// Feature anchors: markers land on TRUE math features, never guessed coords.
+{
+  const featureScene: SceneSpec = {
+    version: 1,
+    stage: "graph",
+    objects: [
+      { type: "function-plot", id: "par", expr: "(x-1)^2 - 2", domain: [-2, 4] },
+      { type: "function-plot", id: "line", expr: "x - 1", domain: [-2, 4], color: "#d6c24a" },
+      { type: "dot", id: "atMin", at: { x: 0, y: 0 }, place: { kind: "feature", target: "par", feature: "min" } },
+      { type: "dot", id: "atRoot", at: { x: 0, y: 0 }, place: { kind: "feature", target: "par", feature: "root", index: 1 } },
+      { type: "dot", id: "atCross", at: { x: 0, y: 0 }, place: { kind: "feature", target: "par", feature: "intersection", with: "line" } },
+    ],
+    timeline: [
+      { type: "draw", targetId: "par", start: 0, duration: 1 },
+      { type: "draw", targetId: "line", start: 0.5, duration: 1 },
+      { type: "draw", targetId: "atMin", start: 1.5, duration: 0.4 },
+      { type: "draw", targetId: "atRoot", start: 1.8, duration: 0.4 },
+      { type: "draw", targetId: "atCross", start: 2.1, duration: 0.4 },
+    ],
+    duration: 8,
+  };
+  const resolved = resolveLayout(featureScene);
+  const dot = (id: string) => resolved.objects.find((o) => o.id === id) as Extract<SceneSpec["objects"][number], { type: "dot" }>;
+  assert.ok(Math.abs(dot("atMin").at.x - 1) < 0.02 && Math.abs(dot("atMin").at.y - -2) < 0.02, "min lands at vertex (1,-2)");
+  assert.ok(Math.abs(dot("atRoot").at.x - (1 + Math.sqrt(2))) < 0.02, "root index 1 lands at 1+sqrt(2)");
+  // (x-1)^2 - 2 = x - 1 → x^2 - 3x = 0 → x = 0 or 3; index 0 → x = 0, y = -1.
+  assert.ok(Math.abs(dot("atCross").at.x - 0) < 0.02 && Math.abs(dot("atCross").at.y - -1) < 0.05, "intersection lands at (0,-1)");
+  assert.deepEqual(severeIssues(lintScene(resolved)), [], "feature-anchor scene lints clean");
+}
+
+// ---------------------------------------------------------------------------
+// Shot programs: canonical params must build scenes that fly through the whole
+// deterministic gate (layout → polish → lint) with ZERO severe issues.
+{
+  const programBeat = (pattern: string, dur = 22): TeachingBeat => ({
+    id: `prog-${pattern}`,
+    teachingGoal: "Program smoke beat.",
+    narration: "Watch as the point slides closer and closer until the two ideas meet at last.",
+    visualIntent: "Program-rendered canonical shot.",
+    syncCues: [{ phrase: "closer and closer", visualAction: "slide" }],
+    targetDurationSec: dur,
+    shotPattern: pattern,
+  });
+
+  const cases: { id: string; params: Record<string, unknown> }[] = [
+    {
+      id: "graph_approach",
+      params: {
+        fits: true,
+        expr: "x^2",
+        domain: [-0.5, 3],
+        xStart: 2.8,
+        xTarget: 1,
+        approachLatex: "x \\to 1",
+        captionLatex: "f(x) = x^2",
+        cueDraw: "watch as",
+        cueApproach: "closer and closer",
+        cueArrive: "meet at last",
+      },
+    },
+    {
+      id: "secant_to_tangent",
+      params: {
+        fits: true,
+        expr: "x^2",
+        domain: [-0.5, 3.2],
+        xFixed: 1,
+        xMovingStart: 2.8,
+        slopeBeforeLatex: "\\frac{\\Delta f}{\\Delta x}",
+        slopeAfterLatex: "\\frac{df}{dx} = 2x",
+        cueSlide: "closer and closer",
+        cueArrive: "meet at last",
+      },
+    },
+    {
+      id: "equation_transform",
+      params: {
+        fits: true,
+        steps: [
+          { latex: "(x+3)^2 = x^2 + 6x + 9", cue: "watch as" },
+          { latex: "x^2 + 6x = (x+3)^2 - 9", cue: "closer and closer" },
+          { latex: "x^2 + 6x + 5 = (x+3)^2 - 4", cue: "meet at last" },
+        ],
+        captionText: "Completing the square rewrites the same quantity.",
+      },
+    },
+  ];
+
+  for (const { id, params } of cases) {
+    const prog = SHOT_PROGRAMS.find((p) => p.id === id)!;
+    const patternBeat = programBeat(prog.pattern);
+    const built = runProgram(prog, params, patternBeat);
+    assert.ok(built, `${id} must build from canonical params`);
+    const gated = polishScene(resolveLayout(applyShotPattern(built!, patternBeat)));
+    const severe = severeIssues(lintScene(gated));
+    assert.deepEqual(severe, [], `${id} program scene must lint clean, got: ${severe.map((s) => `${s.code}(${s.objectIds?.join("/")})`).join(", ")}`);
+    assert.ok(built!.timeline.some((s) => s.cue), `${id} must carry cue phrases for the retimer`);
+    // fits=false → freeform fallback.
+    assert.equal(runProgram(prog, { ...params, fits: false }, patternBeat), null, `${id} must respect fits=false`);
+  }
+  // Bad math → null → freeform fallback, never a broken scene.
+  const ga = SHOT_PROGRAMS.find((p) => p.id === "graph_approach")!;
+  assert.equal(
+    runProgram(ga, { fits: true, expr: "x^^2!!", domain: [0, 2], xStart: 0, xTarget: 1 }, programBeat("graph-approach")),
+    null,
+    "invalid expr must fall back to freeform",
+  );
 }
 
 console.log("visual QA smoke tests passed");

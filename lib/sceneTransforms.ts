@@ -117,6 +117,97 @@ function pointOnObject(target: SceneObject, anchor: Extract<NonNullable<SceneObj
   return objectAnchor(target, { version: 1, objects: [target], timeline: [] });
 }
 
+/** Sample a curve as (x, y) points for feature detection. */
+function featureSamples(target: SceneObject): Vec2[] {
+  if (target.type === "function-plot") {
+    const fn = compileExpr(target.expr);
+    if (!fn) return [];
+    const n = 400;
+    const points: Vec2[] = [];
+    for (let i = 0; i <= n; i++) {
+      const x = target.domain[0] + ((target.domain[1] - target.domain[0]) * i) / n;
+      const y = fn(x);
+      if (Number.isFinite(y)) points.push({ x, y });
+    }
+    return points;
+  }
+  if (target.type === "parametric") return sampleParametricPoints(target, 400);
+  return [];
+}
+
+/** Linear interpolation of the crossing point between two samples. */
+function crossing(a: Vec2, b: Vec2, va: number, vb: number): Vec2 {
+  const t = va / (va - vb);
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/**
+ * Compute a semantic feature point on a curve by dense sampling. Deterministic
+ * and cheap; a 400-sample scan is plenty at whiteboard precision.
+ */
+function featurePoint(
+  target: SceneObject,
+  place: Extract<NonNullable<SceneObject["place"]>, { kind: "feature" }>,
+  scene: SceneSpec,
+): Vec2 | null {
+  const points = featureSamples(target);
+  if (points.length < 3) return null;
+  const index = place.index ?? 0;
+
+  if (place.feature === "min" || place.feature === "max") {
+    const sign = place.feature === "min" ? 1 : -1;
+    return points.reduce((best, p) => (sign * p.y < sign * best.y ? p : best));
+  }
+
+  if (place.feature === "root") {
+    const roots: Vec2[] = [];
+    for (let i = 1; i < points.length; i++) {
+      const [a, b] = [points[i - 1], points[i]];
+      if (a.y === 0) roots.push(a);
+      else if (a.y * b.y < 0) roots.push({ ...crossing(a, b, a.y, b.y), y: 0 });
+    }
+    return roots[Math.min(index, roots.length - 1)] ?? null;
+  }
+
+  if (place.feature === "inflection") {
+    const flips: Vec2[] = [];
+    for (let i = 2; i < points.length - 1; i++) {
+      const d2a = points[i - 2].y - 2 * points[i - 1].y + points[i].y;
+      const d2b = points[i - 1].y - 2 * points[i].y + points[i + 1].y;
+      if (d2a * d2b < 0 && Math.abs(d2a - d2b) > 1e-12) flips.push(points[i]);
+    }
+    return flips[Math.min(index, flips.length - 1)] ?? null;
+  }
+
+  // intersection: needs a second curve (function-plots compared by x).
+  const other = scene.objects.find((o) => o.id === place.with);
+  if (!other || target.type !== "function-plot" || other.type !== "function-plot") return null;
+  const f = compileExpr(target.expr);
+  const g = compileExpr(other.expr);
+  if (!f || !g) return null;
+  const lo = Math.max(Math.min(...target.domain), Math.min(...other.domain));
+  const hi = Math.min(Math.max(...target.domain), Math.max(...other.domain));
+  if (!(hi > lo)) return null;
+  const hits: Vec2[] = [];
+  let prev: { x: number; d: number } | null = null;
+  for (let i = 0; i <= 400; i++) {
+    const x = lo + ((hi - lo) * i) / 400;
+    const d = f(x) - g(x);
+    if (!Number.isFinite(d)) {
+      prev = null;
+      continue;
+    }
+    if (prev && prev.d * d < 0) {
+      const t = prev.d / (prev.d - d);
+      const xi = prev.x + (x - prev.x) * t;
+      const yi = f(xi);
+      if (Number.isFinite(yi)) hits.push({ x: xi, y: yi });
+    }
+    prev = { x, d };
+  }
+  return hits[Math.min(index, hits.length - 1)] ?? null;
+}
+
 function resolvePlacement(obj: SceneObject, scene: SceneSpec): Vec2 | null {
   const place = obj.place;
   if (!place) return null;
@@ -129,6 +220,8 @@ function resolvePlacement(obj: SceneObject, scene: SceneSpec): Vec2 | null {
   let p: Vec2 | null = null;
   if (place.kind === "on") {
     p = pointOnObject(target, place);
+  } else if (place.kind === "feature") {
+    p = featurePoint(target, place, scene);
   } else if (place.kind === "relativeTo") {
     const b = objectBounds(target, scene);
     if (b) {
