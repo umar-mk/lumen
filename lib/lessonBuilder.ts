@@ -11,6 +11,7 @@ import { silentFallbackScene } from "@/lib/fallbackScene";
 import { offlineDerivativeVisualLesson, offlineUsage } from "@/lib/offlinePipeline";
 import { polishScene } from "@/lib/scenePolish";
 import { sanitizeScene } from "@/lib/sceneSanitize";
+import { scoreScene } from "@/lib/sceneScore";
 import { formatIssues, lintScene, severeIssues, type SceneIssue } from "@/lib/sceneQA";
 import { validateScene, sceneSpecSchema } from "@/lib/sceneSchema";
 import { addUsage, emptyUsage } from "@/lib/scriptBuilder";
@@ -30,6 +31,15 @@ const MINIMAL_SYSTEM = `${PERSONA}\n\n${SCENE_RULES}\n\n${SCENE_MINIMAL_RULES}`;
 // ~10-min builds). Deterministic layout + sanitize now handle correctness, so
 // review is an opt-in quality pass — set LUMEN_SCENE_REVIEW=1 to re-enable.
 const ENABLE_MODEL_REVIEW = process.env.LUMEN_SCENE_REVIEW === "1";
+
+// Best-of-N for FREEFORM beats: fire N compose calls in PARALLEL (same
+// latency), score each candidate with the deterministic judge
+// (lib/sceneScore), keep the winner. Selection instead of review — the judge
+// is free and never hallucinates. Program beats skip this (no need).
+const BEST_OF = (() => {
+  const n = Number(process.env.LUMEN_BEST_OF ?? 2);
+  return Number.isFinite(n) ? Math.max(1, Math.min(3, Math.round(n))) : 2;
+})();
 
 /**
  * A minimal, always-valid scene so a single failed beat can't break the lesson.
@@ -356,7 +366,8 @@ export async function buildLesson(script: LessonScript, send: (event: LessonStre
     }
 
     if (!scene) {
-      try {
+      // Freeform path, best-of-N: parallel candidates, deterministic judge.
+      const composeOnce = async (): Promise<{ scene: SceneSpec | null; usage: Usage; reason?: string }> => {
         const { input, usage: u } = await runTool({
           system: SYSTEM,
           toolName: "compose_scene",
@@ -366,27 +377,50 @@ export async function buildLesson(script: LessonScript, send: (event: LessonStre
           maxTokens: 16000,
           messages: [{ role: "user", content: sceneBrief(script, beat, i, total, prev) }],
         });
-        usage = addUsage(usage, u);
         const result = validateScene(input);
-        if (result.ok) {
-          scene = result.scene;
-          if (ENABLE_MODEL_REVIEW) {
-            const reviewed = await reviewScene(script, beat, i, total, scene, prev);
-            usage = addUsage(usage, reviewed.usage);
-            scene = reviewed.scene;
-            if (reviewed.warning) {
-              console.warn(`[lesson] beat ${i + 1}/${total} (${beat.id}) REVIEW kept original: ${reviewed.warning}`);
-              reviewWarnings.push({ beat: i + 1, id: beat.id, reason: reviewed.warning });
-            }
-          }
+        return result.ok ? { scene: result.scene, usage: u } : { scene: null, usage: u, reason: `invalid: ${result.error}` };
+      };
+
+      const settled = await Promise.allSettled(Array.from({ length: BEST_OF }, composeOnce));
+      const candidates: SceneSpec[] = [];
+      let firstReason: string | null = null;
+      for (const s of settled) {
+        if (s.status === "fulfilled") {
+          usage = addUsage(usage, s.value.usage);
+          if (s.value.scene) candidates.push(s.value.scene);
+          else firstReason ??= s.value.reason ?? "invalid";
         } else {
-          // Loud, never silent: reaching the rescue means generation failed.
-          console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) INVALID scene → minimal rescue: ${result.error}`);
-          failures.push({ beat: i + 1, id: beat.id, reason: `invalid: ${result.error}` });
+          firstReason ??= s.reason instanceof Error ? s.reason.message : String(s.reason);
         }
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) THREW → minimal rescue: ${reason}`);
+      }
+
+      if (candidates.length) {
+        if (candidates.length > 1) {
+          const scored = candidates.map((c) => {
+            const gated = layoutAndLint(c, beat, prev);
+            return { scene: c, total: scoreScene(gated.scene, { issues: gated.issues }).total };
+          });
+          scored.sort((a, b) => b.total - a.total);
+          scene = scored[0].scene;
+          console.log(
+            `[lesson] beat ${i + 1}/${total} (${beat.id}) best-of-${candidates.length}: picked ${scored.map((s) => s.total).join(" over ")}`,
+          );
+        } else {
+          scene = candidates[0];
+        }
+        if (ENABLE_MODEL_REVIEW) {
+          const reviewed = await reviewScene(script, beat, i, total, scene, prev);
+          usage = addUsage(usage, reviewed.usage);
+          scene = reviewed.scene;
+          if (reviewed.warning) {
+            console.warn(`[lesson] beat ${i + 1}/${total} (${beat.id}) REVIEW kept original: ${reviewed.warning}`);
+            reviewWarnings.push({ beat: i + 1, id: beat.id, reason: reviewed.warning });
+          }
+        }
+      } else {
+        // Loud, never silent: reaching the rescue means generation failed.
+        const reason = firstReason ?? "no candidate produced";
+        console.error(`[lesson] beat ${i + 1}/${total} (${beat.id}) FAILED compose → minimal rescue: ${reason}`);
         failures.push({ beat: i + 1, id: beat.id, reason });
       }
     }

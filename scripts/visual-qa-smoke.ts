@@ -357,6 +357,62 @@ offlineDerivativeLesson.segments.forEach((seg, i) => {
         captionText: "Completing the square rewrites the same quantity.",
       },
     },
+    {
+      id: "number_line_convergence",
+      params: {
+        fits: true,
+        center: 2,
+        leftStart: 0.4,
+        rightStart: 3.6,
+        centerLatex: "L = 2",
+        cueSqueeze: "closer and closer",
+        cueMeet: "meet at last",
+      },
+    },
+    {
+      id: "area_accumulation",
+      params: {
+        fits: true,
+        expr: "0.5*x^2 + 1",
+        domain: [0, 4],
+        xFrom: 0.5,
+        xTo: 3.5,
+        barCount: 6,
+        areaLatex: "\\int_{0.5}^{3.5} f(x)\\,dx",
+        cueBars: "closer and closer",
+        cueTotal: "meet at last",
+      },
+    },
+    {
+      id: "vector_projection",
+      params: {
+        fits: true,
+        vx: 2,
+        vy: 3,
+        wx: 4,
+        wy: 1,
+        vLatex: "\\vec v",
+        wLatex: "\\vec w",
+        projLatex: "\\text{proj}_{\\vec w}\\vec v",
+        cueDrop: "closer and closer",
+        cueProjection: "meet at last",
+      },
+    },
+    {
+      id: "probability_bar",
+      params: {
+        fits: true,
+        segments: [
+          { label: "A", weight: 3 },
+          { label: "B", weight: 5 },
+          { label: "C", weight: 2 },
+        ],
+        highlightIndex: 0,
+        highlightLatex: "P(A) = 0.3",
+        cueBar: "watch as",
+        cueHighlight: "closer and closer",
+      },
+    },
   ];
 
   for (const { id, params } of cases) {

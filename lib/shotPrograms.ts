@@ -295,6 +295,342 @@ function buildEquationTransform(p: EquationTransformParams, beat: TeachingBeat):
 }
 
 // ---------------------------------------------------------------------------
+// Program: number-line-convergence — two markers squeeze onto a limit point
+// from both sides of a number line; the canonical two-sided-limit picture.
+
+const numberLineParams = z.object({
+  fits: z
+    .boolean()
+    .describe("true ONLY if this beat is 'values approach one point from both sides on a number line'."),
+  center: num.describe("The limit/target value L."),
+  leftStart: num.describe("Where the left marker starts (must be < center)."),
+  rightStart: num.describe("Where the right marker starts (must be > center)."),
+  tickStep: num.positive().max(100).optional().describe("Tick spacing (default auto)."),
+  centerLatex: latex.optional().describe("Optional label for the target, e.g. 'L = 2'."),
+  cueLine: cue.optional(),
+  cueSqueeze: cue.optional().describe("Verbatim phrase for when both markers move inward."),
+  cueMeet: cue.optional().describe("Verbatim phrase for the meeting moment."),
+});
+type NumberLineParams = z.infer<typeof numberLineParams>;
+
+function buildNumberLine(p: NumberLineParams, beat: TeachingBeat): SceneSpec | null {
+  if (!(p.leftStart < p.center && p.center < p.rightStart)) return null;
+  const D = beat.targetDurationSec;
+  const span = p.rightStart - p.leftStart;
+  const xMin = p.leftStart - span * 0.18;
+  const xMax = p.rightStart + span * 0.18;
+  const view = makeView(xMin, xMax, -span * 0.12, span * 0.12);
+  const gap = span * 0.012; // visually "meets" without physically stacking
+
+  const objects: SceneObject[] = [
+    {
+      type: "axes",
+      id: "line",
+      xRange: [xMin, xMax],
+      yRange: [0, 0.001], // a pure number line: no vertical axis to speak of
+      step: p.tickStep,
+      showGrid: false,
+      emphasizeTicks: [{ axis: "x", value: p.center, color: ACCENT }],
+    },
+    { type: "dot", id: "target", at: { x: p.center, y: 0 }, radius: 9, color: ACCENT, filled: false },
+    { type: "dot", id: "left", at: { x: p.leftStart, y: 0 }, radius: 8, color: CURVE },
+    { type: "dot", id: "right", at: { x: p.rightStart, y: 0 }, radius: 8, color: HELPER },
+    { type: "arrow", id: "leftArrow", from: { x: p.leftStart, y: span * 0.07 }, to: { x: p.center - span * 0.06, y: span * 0.07 }, color: CURVE, width: 2, dash: [8, 7] },
+    { type: "arrow", id: "rightArrow", from: { x: p.rightStart, y: span * 0.07 }, to: { x: p.center + span * 0.06, y: span * 0.07 }, color: HELPER, width: 2, dash: [8, 7] },
+  ];
+  if (p.centerLatex) objects.push({ type: "equation", id: "centerEq", latex: p.centerLatex, at: { x: 0, y: 0 }, region: "topStrip" });
+
+  const squeezeStart = D * 0.36;
+  const squeezeDur = D * 0.36;
+  const meetAt = squeezeStart + squeezeDur;
+  const pushStart = squeezeStart + squeezeDur * 0.35;
+  const timeline: AnimationStep[] = [
+    { type: "draw", targetId: "line", start: 0, duration: 0.9, cue: p.cueLine },
+    { type: "draw", targetId: "target", start: D * 0.14, duration: 0.4 },
+    { type: "draw", targetId: "left", start: D * 0.18, duration: 0.35 },
+    { type: "draw", targetId: "right", start: D * 0.22, duration: 0.35 },
+    { type: "draw", targetId: "leftArrow", start: D * 0.26, duration: 0.6 },
+    { type: "draw", targetId: "rightArrow", start: D * 0.28, duration: 0.6 },
+    { type: "move", targetId: "left", to: { x: p.center - gap, y: 0 }, start: squeezeStart, duration: squeezeDur, cue: p.cueSqueeze },
+    { type: "move", targetId: "right", to: { x: p.center + gap, y: 0 }, start: squeezeStart + 0.2, duration: squeezeDur - 0.2 },
+    { type: "fadeOut", targetId: "leftArrow", start: meetAt - 0.6, duration: 0.5 },
+    { type: "fadeOut", targetId: "rightArrow", start: meetAt - 0.6, duration: 0.5 },
+    { type: "emphasize", targetId: "target", scaleTo: 1.6, start: meetAt, duration: Math.max(0.8, D * 0.08), cue: p.cueMeet },
+  ];
+  if (p.centerLatex) {
+    timeline.push({ type: "fadeIn", targetId: "centerEq", start: D * 0.1, duration: 0.5 });
+    // Region text and whole-scene zooms never coexist (clip failure) — the
+    // label has been read by squeeze time; the emphasized tick carries on.
+    timeline.push({ type: "fadeOut", targetId: "centerEq", start: pushStart - 0.5, duration: 0.45 });
+  }
+
+  return {
+    version: 1,
+    stage: "split",
+    shotPattern: "number-line-convergence",
+    view,
+    camera: [{ start: pushStart, duration: Math.max(1.5, D * 0.25), to: pushInView(view, { x: p.center, y: 0 }, 0.55) }],
+    objects,
+    timeline,
+    duration: D,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Program: area-accumulation — bars fill the region under a curve one by one;
+// perfectly tiled Riemann rectangles, computed (never eyeballed).
+
+const areaAccumulationParams = z.object({
+  fits: z
+    .boolean()
+    .describe("true ONLY if this beat is 'accumulating area under one curve' (Riemann bars, integral intuition)."),
+  expr: expr.describe("The curve, safe expression in x. Should stay one-signed on [xFrom, xTo] for a clean picture."),
+  domain: z.tuple([num, num]).describe("x-domain to plot (wider than the shaded part is fine)."),
+  xFrom: num.describe("Left edge of the accumulated region."),
+  xTo: num.describe("Right edge of the accumulated region."),
+  barCount: z.number().int().min(3).max(12).describe("How many bars to tile the region with."),
+  areaLatex: latex.optional().describe("Optional caption equation, e.g. an integral."),
+  cueDraw: cue.optional(),
+  cueBars: cue.optional().describe("Verbatim phrase for when the bars start filling in."),
+  cueTotal: cue.optional().describe("Verbatim phrase for the total-area moment."),
+});
+type AreaAccumulationParams = z.infer<typeof areaAccumulationParams>;
+
+function buildAreaAccumulation(p: AreaAccumulationParams, beat: TeachingBeat): SceneSpec | null {
+  const range = sampleY(p.expr, p.domain);
+  const fn = compileExpr(p.expr);
+  if (!range || !fn || !(p.xTo > p.xFrom)) return null;
+  const D = beat.targetDurationSec;
+  const view = makeView(Math.min(...p.domain), Math.max(...p.domain), Math.min(0, range.yMin), Math.max(0, range.yMax));
+
+  const objects: SceneObject[] = [
+    {
+      type: "axes",
+      id: "ax",
+      xRange: [Math.min(...p.domain), Math.max(...p.domain)],
+      yRange: [Math.min(0, range.yMin), Math.max(0, range.yMax)],
+      showGrid: true,
+      emphasizeTicks: [
+        { axis: "x", value: p.xFrom, color: ACCENT },
+        { axis: "x", value: p.xTo, color: ACCENT },
+      ],
+    },
+    { type: "function-plot", id: "curve", expr: p.expr, domain: p.domain, color: CURVE, width: 4 },
+  ];
+
+  const dx = (p.xTo - p.xFrom) / p.barCount;
+  const barIds: string[] = [];
+  for (let i = 0; i < p.barCount; i++) {
+    const xMid = p.xFrom + dx * (i + 0.5);
+    const y = fn(xMid);
+    if (!Number.isFinite(y) || Math.abs(y) < 1e-9) continue;
+    const id = `bar${i}`;
+    barIds.push(id);
+    objects.push({
+      type: "box",
+      id,
+      at: { x: xMid, y: y / 2 },
+      width: dx * 0.94,
+      height: Math.abs(y),
+      radius: 0,
+      fill: "rgba(76,201,217,0.28)",
+      stroke: CURVE,
+      strokeWidth: 1.5,
+    });
+  }
+  if (!barIds.length) return null;
+  if (p.areaLatex) objects.push({ type: "equation", id: "areaEq", latex: p.areaLatex, at: { x: 0, y: 0 }, region: "caption" });
+
+  const barsStart = D * 0.3;
+  const barsWindow = D * 0.42;
+  const per = barsWindow / barIds.length;
+  const timeline: AnimationStep[] = [
+    { type: "draw", targetId: "ax", start: 0, duration: 0.9 },
+    { type: "draw", targetId: "curve", start: 0.8, duration: 1.6, cue: p.cueDraw },
+    ...barIds.map((id, i) => ({
+      type: "fadeIn" as const,
+      targetId: id,
+      start: barsStart + per * i,
+      duration: Math.max(0.35, per * 0.9),
+      ...(i === 0 ? { cue: p.cueBars } : {}),
+    })),
+    { type: "highlight", targetId: "curve", start: barsStart + barsWindow, duration: 1.0, color: ACCENT, cue: p.cueTotal },
+  ];
+  if (p.areaLatex) timeline.push({ type: "fadeIn", targetId: "areaEq", start: barsStart + barsWindow * 0.7, duration: 0.6 });
+
+  return {
+    version: 1,
+    stage: "graph",
+    shotPattern: "area-accumulation",
+    view,
+    objects,
+    timeline,
+    duration: D,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Program: vector-projection — v and w from the origin; the projection of v
+// onto w drops in with its perpendicular helper. All geometry computed.
+
+const vectorProjectionParams = z.object({
+  fits: z
+    .boolean()
+    .describe("true ONLY if this beat is 'project one vector onto another' (shadow/component picture)."),
+  vx: num,
+  vy: num,
+  wx: num,
+  wy: num,
+  vLatex: latex.optional().describe("Optional label for v, e.g. '\\\\vec v'."),
+  wLatex: latex.optional().describe("Optional label for w."),
+  projLatex: latex.optional().describe("Optional side equation for the projection formula."),
+  cueVectors: cue.optional(),
+  cueDrop: cue.optional().describe("Verbatim phrase for when the perpendicular drops."),
+  cueProjection: cue.optional().describe("Verbatim phrase for the projection reveal."),
+});
+type VectorProjectionParams = z.infer<typeof vectorProjectionParams>;
+
+function buildVectorProjection(p: VectorProjectionParams, beat: TeachingBeat): SceneSpec | null {
+  const w2 = p.wx * p.wx + p.wy * p.wy;
+  const v2 = p.vx * p.vx + p.vy * p.vy;
+  if (w2 < 1e-9 || v2 < 1e-9) return null;
+  const k = (p.vx * p.wx + p.vy * p.wy) / w2;
+  const proj = { x: k * p.wx, y: k * p.wy };
+  const D = beat.targetDurationSec;
+
+  const xs = [0, p.vx, p.wx, proj.x];
+  const ys = [0, p.vy, p.wy, proj.y];
+  const view = makeView(Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys));
+
+  const objects: SceneObject[] = [
+    {
+      type: "axes",
+      id: "ax",
+      xRange: [Math.min(...xs) - 0.5, Math.max(...xs) + 0.5],
+      yRange: [Math.min(...ys) - 0.5, Math.max(...ys) + 0.5],
+      showGrid: true,
+    },
+    { type: "arrow", id: "w", from: { x: 0, y: 0 }, to: { x: p.wx, y: p.wy }, color: CURVE, width: 4 },
+    { type: "arrow", id: "v", from: { x: 0, y: 0 }, to: { x: p.vx, y: p.vy }, color: ACCENT, width: 4 },
+    { type: "arrow", id: "drop", from: { x: p.vx, y: p.vy }, to: proj, color: "#9aa4b2", width: 2, dash: [7, 7], head: false },
+    { type: "arrow", id: "proj", from: { x: 0, y: 0 }, to: proj, color: HELPER, width: 5 },
+    { type: "dot", id: "foot", at: proj, radius: 6, color: HELPER },
+  ];
+  if (p.vLatex) objects.push({ type: "equation", id: "vLabel", latex: p.vLatex, at: { x: p.vx, y: p.vy }, callout: { anchorTo: "v" } });
+  if (p.wLatex) objects.push({ type: "equation", id: "wLabel", latex: p.wLatex, at: { x: p.wx, y: p.wy }, callout: { anchorTo: "w" } });
+  if (p.projLatex) objects.push({ type: "equation", id: "projEq", latex: p.projLatex, at: { x: 0, y: 0 }, region: "caption" });
+
+  const dropAt = D * 0.42;
+  const projAt = D * 0.58;
+  const timeline: AnimationStep[] = [
+    { type: "draw", targetId: "ax", start: 0, duration: 0.9 },
+    { type: "draw", targetId: "w", start: D * 0.12, duration: 0.9, cue: p.cueVectors },
+    { type: "draw", targetId: "v", start: D * 0.2, duration: 0.9 },
+    { type: "draw", targetId: "drop", start: dropAt, duration: 1.0, cue: p.cueDrop },
+    { type: "draw", targetId: "foot", start: dropAt + 0.9, duration: 0.35 },
+    { type: "draw", targetId: "proj", start: projAt, duration: 1.1, cue: p.cueProjection },
+    { type: "emphasize", targetId: "proj", scaleTo: 1.12, start: projAt + 1.3, duration: Math.max(0.8, D * 0.08) },
+  ];
+  if (p.vLatex) timeline.push({ type: "fadeIn", targetId: "vLabel", start: D * 0.3, duration: 0.4 });
+  if (p.wLatex) timeline.push({ type: "fadeIn", targetId: "wLabel", start: D * 0.32, duration: 0.4 });
+  if (p.projLatex) timeline.push({ type: "fadeIn", targetId: "projEq", start: projAt + 1.2, duration: 0.6 });
+
+  return {
+    version: 1,
+    stage: "graph",
+    shotPattern: "vector-projection",
+    view,
+    objects,
+    timeline,
+    duration: D,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Program: probability-bar-model — one partitioned bar whose segment widths
+// ARE the probabilities (area-model underneath: perfect tiling for free).
+
+const probabilityBarParams = z.object({
+  fits: z
+    .boolean()
+    .describe("true ONLY if this beat is 'split a whole into weighted parts' (probabilities, proportions, shares)."),
+  segments: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(40).describe("Short segment label (plain text or simple LaTeX)."),
+        weight: num.positive().max(1000).describe("Relative size; widths are weights normalized."),
+        fill: z.string().max(32).optional(),
+      }),
+    )
+    .min(2)
+    .max(6),
+  highlightIndex: z.number().int().min(0).max(5).optional().describe("Which segment the narration singles out."),
+  highlightLatex: latex.optional().describe("Optional label for the highlighted amount, e.g. 'P(A) = 0.3'."),
+  cueBar: cue.optional().describe("Verbatim phrase for when the bar appears."),
+  cueHighlight: cue.optional().describe("Verbatim phrase for the singled-out segment."),
+});
+type ProbabilityBarParams = z.infer<typeof probabilityBarParams>;
+
+const BAR_FILLS = ["rgba(76,201,217,0.35)", "rgba(214,194,74,0.35)", "rgba(232,138,90,0.35)", "rgba(154,164,178,0.30)", "rgba(120,190,140,0.32)", "rgba(190,140,200,0.32)"];
+
+function buildProbabilityBar(p: ProbabilityBarParams, beat: TeachingBeat): SceneSpec | null {
+  const D = beat.targetDurationSec;
+  const totalW = p.segments.reduce((s, seg) => s + seg.weight, 0);
+  if (!(totalW > 0)) return null;
+  const BAR_W = 10; // world units; the view fits around it
+  const BAR_H = 1.6;
+  const x0 = -BAR_W / 2;
+
+  const objects: SceneObject[] = [
+    {
+      type: "area-model",
+      id: "bar",
+      at: { x: x0, y: -BAR_H / 2 },
+      columns: p.segments.map((seg) => ({ size: (seg.weight / totalW) * BAR_W, label: seg.label })),
+      rows: [{ size: BAR_H }],
+      cells: p.segments.map((seg, i) => ({ row: 0, col: i, fill: seg.fill ?? BAR_FILLS[i % BAR_FILLS.length] })),
+      stroke: "#d8d8d8",
+    },
+  ];
+
+  const timeline: AnimationStep[] = [
+    { type: "fadeIn", targetId: "bar", start: D * 0.12, duration: 1.0, cue: p.cueBar },
+  ];
+
+  // Deterministic highlight: a brace measuring the singled-out segment.
+  if (p.highlightIndex !== undefined && p.highlightIndex < p.segments.length) {
+    let acc = 0;
+    for (let i = 0; i < p.highlightIndex; i++) acc += p.segments[i].weight;
+    const hx0 = x0 + (acc / totalW) * BAR_W;
+    const hx1 = hx0 + (p.segments[p.highlightIndex].weight / totalW) * BAR_W;
+    objects.push({
+      type: "brace",
+      id: "hl",
+      from: { x: hx0, y: BAR_H / 2 + 0.25 },
+      to: { x: hx1, y: BAR_H / 2 + 0.25 },
+      side: "above",
+      color: ACCENT,
+      label: undefined,
+    });
+    timeline.push({ type: "draw", targetId: "hl", start: D * 0.48, duration: 0.8, cue: p.cueHighlight });
+    if (p.highlightLatex) {
+      objects.push({ type: "equation", id: "hlEq", latex: p.highlightLatex, at: { x: 0, y: 0 }, region: "topStrip" });
+      timeline.push({ type: "fadeIn", targetId: "hlEq", start: D * 0.56, duration: 0.6 });
+      timeline.push({ type: "highlight", targetId: "hlEq", start: D * 0.8, duration: 1.0, color: ACCENT });
+    }
+  }
+
+  return {
+    version: 1,
+    stage: "split",
+    shotPattern: "probability-bar-model",
+    objects,
+    timeline,
+    duration: D,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 
 export interface ShotProgram {
@@ -345,6 +681,42 @@ export const SHOT_PROGRAMS: ShotProgram[] = [
     rules: `THIS SHOT renders: a clean black statement board; the first equation form fades in; it TRANSFORMS through each later form exactly when its cue phrase is spoken; the final form gets a brief highlight; an optional one-line caption appears near the end. Use it for derivations, notation reveals, and formal statements. steps[].latex must be valid KaTeX.`,
     schema: equationTransformParams,
     build: buildEquationTransform,
+  }),
+  program({
+    id: "number_line_convergence",
+    pattern: "number-line-convergence",
+    description:
+      "Fill the parameters of the pre-choreographed 'two-sided squeeze' shot: markers approach one point from both sides of a number line, camera pushes on the meeting.",
+    rules: `THIS SHOT renders: a horizontal number line with the target tick emphasized → an open target ring plus a left (blue) and right (orange) marker with inward dashed arrows → both markers slide inward exactly on the squeeze cue while the camera pushes on the target → arrows fade, the target pops on the meet cue. leftStart < center < rightStart is required.`,
+    schema: numberLineParams,
+    build: buildNumberLine,
+  }),
+  program({
+    id: "area_accumulation",
+    pattern: "area-accumulation",
+    description:
+      "Fill the parameters of the pre-choreographed 'area fills in' shot: perfectly tiled bars appear one by one under a curve between two bounds.",
+    rules: `THIS SHOT renders: axes with both bounds' ticks emphasized → the curve draws → barCount perfectly computed rectangles fill the region ONE BY ONE starting on the bars cue → the curve flashes on the total cue and the optional integral caption appears. The bars are computed from the expression — they always tile exactly.`,
+    schema: areaAccumulationParams,
+    build: buildAreaAccumulation,
+  }),
+  program({
+    id: "vector_projection",
+    pattern: "vector-projection",
+    description:
+      "Fill the parameters of the pre-choreographed 'projection' shot: v and w from the origin, the perpendicular drops, the projection vector lands emphasized.",
+    rules: `THIS SHOT renders: axes → w (blue) then v (yellow) draw from the origin → a dashed perpendicular drops from v's tip onto w's line on the drop cue → the orange projection vector draws along w on the projection cue and is emphasized → optional labels via callouts and a caption formula. All geometry (foot of perpendicular) is computed exactly.`,
+    schema: vectorProjectionParams,
+    build: buildVectorProjection,
+  }),
+  program({
+    id: "probability_bar",
+    pattern: "probability-bar-model",
+    description:
+      "Fill the parameters of the pre-choreographed 'weighted bar' shot: one bar partitioned by weights (probabilities/proportions), one segment singled out with a brace.",
+    rules: `THIS SHOT renders: one horizontal bar whose segment widths ARE the normalized weights, each labeled inside its segment — the tiling is computed, always exact → the bar fades in on its cue → a yellow brace measures the singled-out segment on the highlight cue, with an optional equation above. Weights need not sum to 1; they are normalized.`,
+    schema: probabilityBarParams,
+    build: buildProbabilityBar,
   }),
 ];
 
