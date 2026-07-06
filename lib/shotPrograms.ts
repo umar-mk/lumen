@@ -23,7 +23,7 @@
 import { z } from "zod";
 
 import { compileExpr } from "@/lib/mathEval";
-import type { ShotPatternName } from "@/lib/shotPatterns";
+import { inferShotPattern, type ShotPatternName } from "@/lib/shotPatterns";
 import type { TeachingBeat } from "@/types/planning";
 import type { AnimationStep, SceneObject, SceneSpec, View } from "@/types/scene";
 
@@ -720,9 +720,28 @@ export const SHOT_PROGRAMS: ShotProgram[] = [
   }),
 ];
 
-export function programForPattern(pattern?: string): ShotProgram | null {
+/**
+ * The specialized shots are only right when the beat is REALLY that picture; a
+ * script-side misassignment (seen live: an orbit beat tagged
+ * probability-bar-model) must not summon them. The broad shots tolerate
+ * ambiguity, so assignment alone is enough there.
+ */
+const NEEDS_KEYWORD_AGREEMENT = new Set<ShotPatternName>([
+  "number-line-convergence",
+  "area-accumulation",
+  "vector-projection",
+  "probability-bar-model",
+]);
+
+export function programForPattern(
+  pattern: string | undefined,
+  beat?: Pick<TeachingBeat, "teachingGoal" | "visualIntent" | "narration">,
+): ShotProgram | null {
   if (process.env.LUMEN_SHOT_PROGRAMS === "0") return null;
-  return SHOT_PROGRAMS.find((p) => p.pattern === pattern) ?? null;
+  const prog = SHOT_PROGRAMS.find((p) => p.pattern === pattern) ?? null;
+  if (!prog) return null;
+  if (beat && NEEDS_KEYWORD_AGREEMENT.has(prog.pattern) && inferShotPattern(beat) !== prog.pattern) return null;
+  return prog;
 }
 
 /** Run a program on validated params; null → caller falls back to freeform. */

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { resolveLayout } from "@/lib/layout";
 import { polishScene } from "@/lib/scenePolish";
-import { SHOT_PROGRAMS, runProgram } from "@/lib/shotPrograms";
+import { SHOT_PROGRAMS, programForPattern, runProgram } from "@/lib/shotPrograms";
 import { findCueTime, retimeScene } from "@/lib/syncTimeline";
 import { offlineDerivativeLesson, offlineDerivativeScript } from "@/lib/offlinePipeline";
 import { lintScene, severeIssues } from "@/lib/sceneQA";
@@ -433,6 +433,25 @@ offlineDerivativeLesson.segments.forEach((seg, i) => {
     runProgram(ga, { fits: true, expr: "x^^2!!", domain: [0, 2], xStart: 0, xTarget: 1 }, programBeat("graph-approach")),
     null,
     "invalid expr must fall back to freeform",
+  );
+
+  // Agreement guard: a specialized program must NOT fire on a beat whose text
+  // is a different picture (the live 51-scoring failure: an orbiting-point
+  // beat tagged probability-bar-model).
+  const orbitBeat = {
+    teachingGoal: "Animate the point around the circle.",
+    visualIntent: "A dot orbits the unit circle while its height traces the sine wave.",
+    narration: "Watch the point travel around the circle as its height rises and falls.",
+  };
+  assert.equal(programForPattern("probability-bar-model", orbitBeat), null, "misassigned specialized pattern must be rejected");
+  assert.ok(programForPattern("graph-approach", orbitBeat), "broad patterns still fire on assignment");
+  assert.ok(
+    programForPattern("probability-bar-model", {
+      teachingGoal: "Split the whole into probabilities.",
+      visualIntent: "A bar partitioned by probability weights.",
+      narration: "The whole bar is all the probability there is.",
+    }),
+    "matching specialized pattern still fires",
   );
 }
 

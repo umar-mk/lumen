@@ -17,9 +17,14 @@ composes, TypeScript directs.* In one pass:
   `place:{kind:"feature"}` math anchors, pinned temperatures.
 
 **Eval numbers (3 golden topics, live DeepSeek):** baseline (pre-stack)
-mean 83.5 / min 67.3, weakest = camera. Post-stack run: (see
-`eval-results/latest.json` — was still running at handoff time; compare
-against `eval-results/2026-07-05T19-41-13/`).
+mean 83.5 / min 67.3. Post-stack: mean 84.1 — under a STRICTER judge (the
+new pacing lints didn't exist at baseline). One beat hit 51.1: the script
+misassigned probability-bar-model to an orbiting-point beat and the program
+fired → two guards added (specialized programs need keyword agreement with
+the beat text; built program scenes must score ≥ 60 or fall back to
+freeform). Confirmation eval run after the guards: see
+`eval-results/latest.json`. Best-of-2 telemetry showed real rescues
+(picked 76 over 57.9, 81.6 over 72.3).
 
 ## Next up
 - Real-browser check: run a live lesson, confirm cued steps land on the

@@ -354,14 +354,23 @@ export async function buildLesson(script: LessonScript, send: (event: LessonStre
 
     // Program path first: on a matching shot pattern the model only fills a
     // tiny param object and the choreography is deterministic — near-zero
-    // error surface and ~10× fewer output tokens than freeform.
-    const program = programForPattern(beat.shotPattern);
+    // error surface and ~10× fewer output tokens than freeform. Two guards:
+    // specialized programs need keyword agreement with the beat text (a
+    // misassigned pattern must not summon the wrong picture), and the built
+    // scene must clear the judge or we fall back to freeform.
+    const program = programForPattern(beat.shotPattern, beat);
     if (program) {
       const viaProgram = await composeViaProgram(program, script, beat);
       usage = addUsage(usage, viaProgram.usage);
       if (viaProgram.scene) {
-        scene = viaProgram.scene;
-        console.log(`[lesson] beat ${i + 1}/${total} (${beat.id}) via shot program ${program.id}`);
+        const gated = layoutAndLint(viaProgram.scene, beat, prev);
+        const judged = scoreScene(gated.scene, { issues: gated.issues }).total;
+        if (judged >= 60) {
+          scene = viaProgram.scene;
+          console.log(`[lesson] beat ${i + 1}/${total} (${beat.id}) via shot program ${program.id} (score ${judged})`);
+        } else {
+          console.warn(`[lesson] beat ${i + 1}/${total} (${beat.id}) program ${program.id} scored ${judged} < 60 → freeform`);
+        }
       }
     }
 
